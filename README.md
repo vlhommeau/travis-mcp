@@ -117,8 +117,9 @@ Outputs, in `--out`:
   waited over 1 minute, passed/failed/errored/canceled counts, errored and failed rates;
 - `saturated_days.csv` — the days whose peak reached the limit;
 - `summary.json` — totals and mean/median/p90: minutes per month, builds per day, build
-  duration (wall clock and billed), concurrency, state split, active repositories, and the
-  caveats below;
+  duration (wall clock and billed), concurrency and peak demand, queue wait percentiles and
+  histogram (with the "waited" threshold stated explicitly), state split, active
+  repositories, and the caveats below;
 - `raw.json` — the fetched builds and jobs, for `--from-cache` re-analysis.
 
 How it works:

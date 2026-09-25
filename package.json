@@ -1,6 +1,6 @@
 {
   "name": "travis-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Read-only MCP server for Travis CI (builds, jobs, logs) over the Travis API v3",
   "type": "module",
   "bin": {

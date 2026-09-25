@@ -119,6 +119,21 @@ class SweepTest(unittest.TestCase):
         rows, _ = tm.analyze(raw(builds, since="2026-09-01T00:00:00+02:00", until="2026-09-03T00:00:00+02:00"), ZoneInfo("Europe/Paris"), 10)
         self.assertEqual([(r["date"], r["builds"]) for r in rows], [("2026-09-01", 0), ("2026-09-02", 1)])
 
+    def test_queue_wait_distribution_and_threshold_are_explicit(self):
+        builds = [
+            build(1, [job("2026-09-01T10:00:00Z", "2026-09-01T10:00:20Z", "2026-09-01T10:10:00Z")]),  # 20s
+            build(2, [job("2026-09-01T11:00:00Z", "2026-09-01T11:00:45Z", "2026-09-01T11:10:00Z")]),  # 45s
+            build(3, [job("2026-09-01T12:00:00Z", "2026-09-01T12:03:00Z", "2026-09-01T12:10:00Z")]),  # 3min
+            build(4, [job("2026-09-01T13:00:00Z", "2026-09-01T13:20:00Z", "2026-09-01T13:30:00Z")]),  # 20min
+        ]
+        rows, summary = tm.analyze(raw(builds), ZoneInfo("UTC"), limit=10)
+        self.assertEqual(summary["concurrency"]["wait_threshold_seconds"], 60)
+        self.assertEqual(
+            summary["concurrency"]["queue_wait_distribution"],
+            {"under_40s": 1, "40s_to_1min": 1, "1_to_2min": 0, "2_to_5min": 1, "5_to_15min": 0, "over_15min": 1},
+        )
+        self.assertEqual(rows[0]["jobs_waited_over_1min"], 2)
+
     def test_months_ago_clamps_day(self):
         self.assertEqual(tm.months_ago(datetime(2026, 5, 31, tzinfo=UTC), 3).date().isoformat(), "2026-02-28")
 

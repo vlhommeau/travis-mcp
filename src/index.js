@@ -18,7 +18,7 @@ const client = new TravisClient({
 const defaultRepo = process.env.TRAVIS_DEFAULT_REPO || undefined;
 const allowedWrites = parseAllowedWrites(process.env.TRAVIS_ALLOW_WRITE);
 
-const server = new McpServer({ name: 'travis-mcp', version: '0.2.0' });
+const server = new McpServer({ name: 'travis-mcp', version: '0.2.1' });
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
 // Restart replaces the previous run's log and result; cancel stops work in progress.

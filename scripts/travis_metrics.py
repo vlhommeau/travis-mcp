@@ -42,6 +42,22 @@ BUILD_STATES = ("passed", "failed", "errored", "canceled")
 WAIT_THRESHOLD = timedelta(seconds=60)
 # Longer "waits" are data artifacts (stuck/orphaned jobs), not queueing: excluded, and counted.
 MAX_PLAUSIBLE_WAIT = timedelta(hours=6)
+# Queue wait histogram buckets (upper bounds), to see how many jobs sit just under the threshold.
+WAIT_BUCKETS = (
+    ("under_40s", timedelta(seconds=40)),
+    ("40s_to_1min", timedelta(minutes=1)),
+    ("1_to_2min", timedelta(minutes=2)),
+    ("2_to_5min", timedelta(minutes=5)),
+    ("5_to_15min", timedelta(minutes=15)),
+    ("over_15min", None),
+)
+
+
+def wait_bucket(wait: timedelta) -> str:
+    for name, upper in WAIT_BUCKETS:
+        if upper is None or wait < upper:
+            return name
+    raise AssertionError("unreachable")
 
 
 # --------------------------------------------------------------------------- API client
@@ -302,6 +318,13 @@ def describe(values: list[float]) -> dict:
     }
 
 
+def percentiles(values: list[float], points: tuple[int, ...]) -> dict:
+    if not values:
+        return {}
+    ordered = sorted(values)
+    return {f"p{p}": round(ordered[int(p / 100 * (len(ordered) - 1))], 1) for p in points}
+
+
 def analyze(raw: dict, tz: ZoneInfo, limit: int) -> tuple[list[dict], dict]:
     since, until = parse_time(raw["since"]), parse_time(raw["until"])
     fetched_at = parse_time(raw["fetched_at"])
@@ -334,14 +357,20 @@ def analyze(raw: dict, tz: ZoneInfo, limit: int) -> tuple[list[dict], dict]:
             if build.get("duration"):
                 billed.append(build["duration"] / 60)
 
+    wait_histogram: Counter[str] = Counter({name: 0 for name, _ in WAIT_BUCKETS})
+    wait_seconds: list[float] = []
     for job in jobs:
         if job.start and local_day(job.start) in daily:
             row = daily[local_day(job.start)]
             row["jobs"] += 1
             row["build_minutes"] += minutes(job.start, job.end)
             monthly_minutes[job.start.astimezone(tz).strftime("%Y-%m")] += minutes(job.start, job.end)
-            if job.wait_start and job.start - job.wait_start > WAIT_THRESHOLD:
-                row["jobs_waited_over_1min"] += 1
+            if job.wait_start:
+                wait = max(job.start - job.wait_start, timedelta(0))
+                wait_histogram[wait_bucket(wait)] += 1
+                wait_seconds.append(wait.total_seconds())
+                if job.start - job.wait_start > WAIT_THRESHOLD:
+                    row["jobs_waited_over_1min"] += 1
 
     rows = []
     for day, _, _ in days:
@@ -393,6 +422,9 @@ def analyze(raw: dict, tz: ZoneInfo, limit: int) -> tuple[list[dict], dict]:
             "daily_peak_demand": describe([r["peak_demand_jobs"] for r in rows]),
             "days_at_or_above_limit": len(saturated),
             "minutes_at_or_above_limit_total": round(sum(r["minutes_at_or_above_limit"] for r in rows), 1),
+            "wait_threshold_seconds": int(WAIT_THRESHOLD.total_seconds()),
+            "queue_wait_distribution": dict(wait_histogram),
+            "queue_wait_seconds_percentiles": percentiles(wait_seconds, (50, 90, 95, 99)),
             "waiting_job_minutes_at_limit_total": round(sum(r["waiting_job_minutes_at_limit"] for r in rows), 1),
             "saturated_days": [
                 {k: r[k] for k in ("date", "weekday", "peak_concurrent_jobs", "peak_demand_jobs", "minutes_at_or_above_limit", "peak_waiting_jobs_at_limit", "waiting_job_minutes_at_limit", "jobs_waited_over_1min")}
@@ -456,6 +488,7 @@ def print_summary(summary: dict) -> None:
     for day in concurrency["saturated_days"]:
         print(f"    {day['date']} {day['weekday']}: peak {day['peak_concurrent_jobs']}, demand {day['peak_demand_jobs']}, {day['minutes_at_or_above_limit']} min at limit, "
               f"up to {day['peak_waiting_jobs_at_limit']} waiting, {day['waiting_job_minutes_at_limit']} job-min waited")
+    print(f"  queue wait (threshold {concurrency['wait_threshold_seconds']}s): {concurrency['queue_wait_seconds_percentiles']} {concurrency['queue_wait_distribution']}")
     print(f"  states: {reliability['states']}  errored rate: {reliability['errored_rate']}  failed rate: {reliability['failed_rate']}")
     print(f"  active repositories: {summary['scope']['active_repositories']}")
 
