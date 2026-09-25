@@ -15,7 +15,7 @@ const client = new TravisClient({
 });
 const defaultRepo = process.env.TRAVIS_DEFAULT_REPO || undefined;
 
-const server = new McpServer({ name: 'travis-mcp', version: '0.1.0' });
+const server = new McpServer({ name: 'travis-mcp', version: '0.1.1' });
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
 

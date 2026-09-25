@@ -48,7 +48,8 @@ export it into the environment the MCP client is launched from.
 
 ## Usage
 
-Claude Code `.mcp.json`, pinned to a tag:
+Claude Code `.mcp.json`, pinned to a full commit SHA — not a tag or branch, which can be
+moved to point at different code (the matching tag is listed in the release):
 
 ```json
 {
@@ -56,7 +57,7 @@ Claude Code `.mcp.json`, pinned to a tag:
     "travis": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "github:vlhommeau/travis-mcp#v0.1.0"],
+      "args": ["-y", "github:vlhommeau/travis-mcp#<commit-sha>"],
       "env": {
         "TRAVIS_API_TOKEN": "${TRAVIS_API_TOKEN}",
         "TRAVIS_DEFAULT_REPO": "owner/name"
@@ -67,7 +68,10 @@ Claude Code `.mcp.json`, pinned to a tag:
 ```
 
 No build step: the server is plain ESM JavaScript, runnable straight from a git checkout
-(Node.js 20+).
+(Node.js 20+). Dependencies are pinned to exact versions and the whole tree is locked by
+`npm-shrinkwrap.json` — unlike `package-lock.json`, npm honors it when the package is
+installed as a dependency (including through `npx github:...`), so every install resolves
+the same transitive versions.
 
 ## Development
 
