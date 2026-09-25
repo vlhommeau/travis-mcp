@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// Read-only MCP server for Travis CI. Exposes build, job and log lookups only:
-// no tool triggers, restarts or cancels builds, and env vars / settings are never read.
+// MCP server for Travis CI. Read-only by default: build, job and log lookups.
+// Build restart/cancel tools are registered only when opted in via TRAVIS_ALLOW_WRITE;
+// nothing ever triggers a new build with custom config, or reads env vars / settings.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { TravisClient } from './travis.js';
 import { summarizeBuild, summarizeJob, trimLog } from './format.js';
+import { parseAllowedWrites } from './config.js';
 
 const client = new TravisClient({
   token: process.env.TRAVIS_API_TOKEN,
@@ -14,10 +16,13 @@ const client = new TravisClient({
   webUrl: process.env.TRAVIS_WEB_URL,
 });
 const defaultRepo = process.env.TRAVIS_DEFAULT_REPO || undefined;
+const allowedWrites = parseAllowedWrites(process.env.TRAVIS_ALLOW_WRITE);
 
-const server = new McpServer({ name: 'travis-mcp', version: '0.1.1' });
+const server = new McpServer({ name: 'travis-mcp', version: '0.2.0' });
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
+// Restart replaces the previous run's log and result; cancel stops work in progress.
+const write = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
 
 const buildId = z
   .union([z.number().int().positive(), z.string().regex(/^\d+$/)])
@@ -134,6 +139,41 @@ server.registerTool(
     return { content: [{ type: 'text', text: `${header}\n\n${log.text}` }] };
   },
 );
+
+const writeTools = {
+  restart: {
+    name: 'restart_build',
+    title: 'Restart build',
+    description:
+      'Restart every job of a finished Travis build. Replaces the previous run\'s logs and result, and consumes concurrency slots. Only call on an explicit human instruction naming this build.',
+    run: (id) => client.restartBuild(id),
+  },
+  cancel: {
+    name: 'cancel_build',
+    title: 'Cancel build',
+    description:
+      'Cancel a created or running Travis build (all its jobs). Only call on an explicit human instruction naming this build.',
+    run: (id) => client.cancelBuild(id),
+  },
+};
+
+for (const action of allowedWrites) {
+  const tool = writeTools[action];
+  server.registerTool(
+    tool.name,
+    {
+      title: tool.title,
+      description: tool.description,
+      inputSchema: { build_id: buildId },
+      annotations: write,
+    },
+    async ({ build_id }) => {
+      const before = summarizeBuild(await client.getBuild(build_id), client);
+      const result = await tool.run(build_id);
+      return json({ action, accepted: result['@type'] === 'pending', state_before: before.state, build: before });
+    },
+  );
+}
 
 function json(value) {
   return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };

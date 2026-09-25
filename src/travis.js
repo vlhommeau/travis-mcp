@@ -1,9 +1,13 @@
-// Minimal Travis CI API v3 client. GET only, by construction: Travis API tokens
-// carry the full permissions of their owner (no scopes, no read-only tokens), so
-// this client is where read-only access is enforced.
+// Minimal Travis CI API v3 client. Travis API tokens carry the full permissions of
+// their owner (no scopes, no read-only tokens), so this client is where access is
+// narrowed: any path can be read, but the only writes it will ever send are the
+// build restart/cancel actions listed in WRITE_PATHS.
 
 const DEFAULT_API_URL = 'https://api.travis-ci.com';
 const DEFAULT_WEB_URL = 'https://app.travis-ci.com';
+
+export const WRITE_ACTIONS = ['restart', 'cancel'];
+const WRITE_PATHS = new RegExp(`^/build/\\d+/(${WRITE_ACTIONS.join('|')})$`);
 
 export class TravisClient {
   constructor({ token, apiUrl = DEFAULT_API_URL, webUrl = DEFAULT_WEB_URL, fetchImpl = fetch }) {
@@ -16,7 +20,18 @@ export class TravisClient {
     this.fetch = fetchImpl;
   }
 
-  async get(path, { query = {}, accept = 'application/json' } = {}) {
+  get(path, { query = {}, accept = 'application/json' } = {}) {
+    return this.request('GET', path, { query, accept });
+  }
+
+  post(path) {
+    if (!WRITE_PATHS.test(path)) {
+      throw new Error(`Refusing write to ${path}: only build restart/cancel are allowed`);
+    }
+    return this.request('POST', path, {});
+  }
+
+  async request(method, path, { query = {}, accept = 'application/json' }) {
     const url = new URL(this.apiUrl + path);
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null && value !== '') {
@@ -25,7 +40,7 @@ export class TravisClient {
     }
 
     const response = await this.fetch(url, {
-      method: 'GET',
+      method,
       headers: {
         'Travis-API-Version': '3',
         Authorization: `token ${this.token}`,
@@ -36,7 +51,7 @@ export class TravisClient {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Travis API ${response.status} on GET ${url.pathname}: ${body.slice(0, 500)}`);
+      throw new Error(`Travis API ${response.status} on ${method} ${url.pathname}: ${body.slice(0, 500)}`);
     }
 
     return accept === 'application/json' ? response.json() : response.text();
@@ -70,6 +85,14 @@ export class TravisClient {
 
   getJobLog(jobId) {
     return this.get(`/job/${encodeURIComponent(jobId)}/log.txt`, { accept: 'text/plain' });
+  }
+
+  restartBuild(buildId) {
+    return this.post(`/build/${encodeURIComponent(buildId)}/restart`);
+  }
+
+  cancelBuild(buildId) {
+    return this.post(`/build/${encodeURIComponent(buildId)}/cancel`);
   }
 
   buildWebUrl(repoSlug, buildId) {
